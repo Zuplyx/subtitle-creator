@@ -1,18 +1,18 @@
 import argparse
-import datetime
-import json
 import os
 import shutil
 import subprocess
-import wave
+import tempfile
+
+import langcodes
+import langid
+import soundfile as sf
 import srt
-
+import torch
+from aeneas.executetask import ExecuteTask
+from aeneas.task import Task
 from argostranslate import package, translate
-from langdetect import detect, DetectorFactory
-from vosk import Model, KaldiRecognizer
-
-# Set seed to make langdetect results reproducible
-DetectorFactory.seed = 0
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
 
 def check_ffmpeg():
@@ -44,58 +44,104 @@ def extract_audio(video_file, audio_file):
         raise e
 
 
-def transcribe_audio(audio_file: str, vosk_model_path: str) -> list[srt.Subtitle]:
+def load_audio(file_path):
     """
-    Transcribe audio using Vosk.
-
-    :param audio_file: Path to the audio file to be transcribed
-    :param vosk_model_path: Path to the Vosk model file
-    :return: A list of transcription results in JSON format, each represented as a SRT subtitle object
+    Load the audio file and return audio data and sample rate.
     """
-    # Open the audio file as a wave object
-    wf = wave.open(audio_file, 'rb')
-
-    # Initialize the Vosk model and recognizer with the provided model path and audio file parameters
-    model = Model(vosk_model_path)
-    recognizer = KaldiRecognizer(model, wf.getframerate())
-    recognizer.SetWords(True)
-
-    results = []
-
-    while True:
-        data = wf.readframes(4000)
-        if len(data) == 0:
-            break
-        if recognizer.AcceptWaveform(data):
-            results.append(recognizer.Result())
-    results.append(recognizer.FinalResult())
-
-    subs = []
-    words_per_line = 7
-    for res in results:
-        jres = json.loads(res)
-        if not "result" in jres:
-            continue
-        words = jres["result"]
-        for j in range(0, len(words), words_per_line):
-            line = words[j: j + words_per_line]
-            s = srt.Subtitle(index=len(subs),
-                             content=" ".join([l["word"] for l in line]),
-                             start=datetime.timedelta(seconds=line[0]["start"]),
-                             end=datetime.timedelta(seconds=line[-1]["end"]))
-            subs.append(s)
+    audio_input, sample_rate = sf.read(file_path)
+    return audio_input, sample_rate
 
 
+def detect_language(audio_input, sample_rate):
+    """
+    Detect the language of the spoken content in the audio using a portion of the input.
+    Returns an ISO 639-1 language code.
+    """
+    # Convert audio to a string format for language detection
+    # Here we take a portion of the audio input (first 30 seconds or so) for detection
+    processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-xlsr-53")
+    model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-xlsr-53")
 
-    wf.close()  # Close the wave object
-    return subs
+    inputs = processor(audio_input[:sample_rate * 30], sampling_rate=sample_rate, return_tensors="pt", padding=True)
 
+    with torch.no_grad():
+        logits = model(inputs.input_values).logits
+        predicted_ids = torch.argmax(logits, dim=-1)
 
-def detect_language(transcriptions: list[srt.Subtitle]) -> str:
-    """Detect the source language of a video by looking at the first few transcription results."""
-    sample_text = ' '.join(sub.content for sub in transcriptions[:10])
-    detected_lang = detect(sample_text)
+    transcription_sample = processor.batch_decode(predicted_ids)[0]
+
+    # Detect language from transcription sample
+    detected_lang, confidence = langid.classify(transcription_sample)
     return detected_lang
+
+
+def transcribe_audio(audio_input: torch.Tensor, sample_rate: int) -> tuple[str, torch.Tensor, Wav2Vec2Processor]:
+    """
+    Transcribe the audio using XLS-R and return the transcription.
+
+    Args:
+        audio_input (torch.Tensor): The input audio tensor.
+        sample_rate (int): The sample rate of the audio.
+
+    Returns:
+        tuple[str, torch.Tensor, Wav2Vec2Processor]: A tuple containing the transcription string,
+            the logits tensor from the model, and the processor used for preprocessing.
+    """
+    # Load XLS-R model and processor
+    processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-xlsr-53")
+    model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-xlsr-53")
+
+    # Preprocess the audio for the model
+    inputs = processor(audio_input, sampling_rate=sample_rate, return_tensors="pt", padding=True)
+
+    # Run the model and get the logits
+    with torch.no_grad():
+        logits = model(inputs.input_values).logits
+        predicted_ids = torch.argmax(logits, dim=-1)
+
+    # Convert predicted ids to text (basic transcription)
+    transcription = processor.batch_decode(predicted_ids)[0]
+    return transcription, logits, processor
+
+
+def convert_iso639_1_to_2(iso639_1_code):
+    lang = langcodes.Language.get(iso639_1_code)
+    return lang.to_tag().split('-')[0] if lang else None
+
+
+def align_transcript_with_audio(audio_file_path: str, transcript_string: str, language: str = "eng") -> list[
+    srt.Subtitle]:
+    """
+    Align the given transcript with the audio file and generate an SRT subtitle list.
+
+    Args:
+        audio_file_path (str): The path to the audio file.
+        transcript_string (str): The transcription string to align with the audio.
+        language (str, optional): The language of the audio. Defaults to "eng".
+
+    Returns:
+        list[srt.Subtitle]: A list of SRT subtitle objects representing the aligned transcript and audio.
+    """
+    # Create a temporary text file for the transcript
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as temp_transcript_file:
+        temp_transcript_file.write(transcript_string.encode('utf-8'))
+        temp_transcript_file_path = temp_transcript_file.name
+
+    # Create a Task object
+    task = Task(config_string=f"task_language={language}|os_task_file_format=srt|")
+    task.audio_file_path = audio_file_path
+    task.text_file_path = temp_transcript_file_path
+
+    # Execute the task
+    execute_task_result = ExecuteTask(task).execute()
+
+    # Get the SRT content as a string
+    srt_content = task.output_sync_map_file()
+
+    # Parse the SRT content into Subtitle objects
+    subtitles = list(srt.parse(srt_content))
+
+    return subtitles
 
 
 def translate_transcription(transcriptions: list[srt.Subtitle], source_lang_code) -> list[srt.Subtitle]:
@@ -128,7 +174,7 @@ def translate_transcription(transcriptions: list[srt.Subtitle], source_lang_code
     return translations
 
 
-def create_srt(subs: list[srt.Subtitle], srt_file: str):
+def create_srt_files(subs: list[srt.Subtitle], srt_file: str):
     """
     Create SRT file from transcriptions and translations.
 
@@ -140,9 +186,8 @@ def create_srt(subs: list[srt.Subtitle], srt_file: str):
         raise ValueError("The provided path should point to an empty file with a '.srt' extension.")
 
     with open(srt_file, 'w', encoding='utf-8') as f:
-       f.write(srt.compose(subs))
-       f.close()
-
+        f.write(srt.compose(subs))
+        f.close()
 
 
 def add_selectable_subtitles_to_video(video_file, subtitle_file, output_video):
@@ -174,20 +219,33 @@ def add_selectable_subtitles_to_video(video_file, subtitle_file, output_video):
 def main(video_file, vosk_model_path, output_file, overwrite):
     check_ffmpeg()
 
+    # temp files. should be configurable in the future and probably be deleted after processing is done.
     audio_file = 'audio.wav'
     subtitle_file = 'subtitles.srt'
 
     extract_audio(video_file, audio_file)
-    transcriptions = transcribe_audio(audio_file, vosk_model_path)
-    detected_lang_code = detect_language(transcriptions)
 
+    # load audio
+    audio_input, sample_rate = load_audio(audio_file)
+
+    # detect language
+    detected_lang_code = detect_language(audio_input, sample_rate)
     print(f"Detected language code: {detected_lang_code}")
+
+    # transcribe audio
+    transcription, logits, processor = transcribe_audio(audio_input, sample_rate)
+
+    # Align transcription and cCreate Subtitles
+    subtitles = align_transcript_with_audio(audio_file, transcription, convert_iso639_1_to_2(detected_lang_code))
 
     # Install Argos Translate model based on detected language
     install_argos_model(detected_lang_code)
 
-    translations = translate_transcription(transcriptions, detected_lang_code)
-    create_srt(translations, subtitle_file)
+    # translate transcription to target language
+    translations = translate_transcription(subtitles, detected_lang_code)
+
+    # Create Subtitle file
+    create_srt_files(translations, subtitle_file)
 
     # Determine output file path
     if not output_file:
@@ -200,9 +258,9 @@ def main(video_file, vosk_model_path, output_file, overwrite):
                 f"Output file '{output_file}' already exists. Use the --overwrite flag to overwrite it.")
         output_video = output_file
 
+    # Add selectable subtitles to video
     add_selectable_subtitles_to_video(video_file, subtitle_file, output_video)
     print(f"Selectable subtitles added successfully to the video! Output saved to: {output_video}")
-
 
 
 # Command-line arguments setup
