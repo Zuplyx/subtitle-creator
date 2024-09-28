@@ -11,7 +11,7 @@ vosk = "^0.3.45"
 argostranslate = "^1.9.6"
 langdetect = "^1.0.9"
 # langdetect requires older version of numpy
-numpy = "<2.0"
+numpy = "<3.0"
 charset_normalizer = "^3.3.0"
 
 
