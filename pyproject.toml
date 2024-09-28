@@ -1,20 +1,19 @@
 [tool.poetry]
 name = "subtitlecreator"
-version = "0.1.0"
+version = "0.2.0"
 description = "Create english subtitles for a video."
 authors = ["Zuplyx <patrick_98@t-online.de>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.12"
-vosk = "^0.3.45"
-argostranslate = "^1.9.6"
-langdetect = "^1.0.9"
-# langdetect requires older version of numpy
-numpy = "<2.0"
 charset_normalizer = "^3.3.0"
-
+srt = "^3.5.3"
+transformers = "^4.45.1"
+accelerate = "^0.26.0"
+torch = "^2.4.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+package-mode = false
