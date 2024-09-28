@@ -7,19 +7,13 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.12"
-argostranslate = "^1.9.6"
-# langdetect requires older version of numpy
-numpy = "<2.0"
 charset_normalizer = "^3.3.0"
-soundfile = "^0.12.1"
-ctc-segmentation = "^1.7.4"
-langid = "^1.1.6"
 srt = "^3.5.3"
-py3-aeneas = "^1.0.0"
-langcodes = "^3.4.1"
 transformers = "^4.45.1"
-
+accelerate = "^0.26.0"
+torch = "^2.4.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+package-mode = false
