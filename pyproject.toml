@@ -10,8 +10,15 @@ python = "^3.12"
 charset_normalizer = "^3.3.0"
 srt = "^3.5.3"
 transformers = "^4.45.1"
-accelerate = "^0.26.0"
-torch = "^2.4.1"
+accelerate = "^0.34.2"
+torchvision = {version = "^0.19.1+cu124", source = "pytorch-gpu"}
+torchaudio = {version = "^2.4.1+cu124", source = "pytorch-gpu"}
+torch = {version = "^2.4.1+cu124", source = "pytorch-gpu"}
+
+[[tool.poetry.source]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu124"
+priority = "explicit"
 
 [build-system]
 requires = ["poetry-core"]
