@@ -17,7 +17,7 @@ Start a shell in the virtual env via ``poetry shell``, then run the script with:
 Full options: ``python subtitleCreator.py -h``:
 
 ````text
-usage: subtitleCreator.py [-h] [-o OUTPUT] [--overwrite] video_file 
+usage: subtitleCreator.py [-h] [-o OUTPUT] [--temp TEMP] [--overwrite] [--burn] [--keep] video_file
 
 Add translated subtitles to a video.
 
@@ -27,6 +27,11 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   -o OUTPUT, --output OUTPUT
-                        Path to the output video file. If not specified the video will be saved as '<input_file>_subtitles.mp4'.
+                        Path to the output video file. If not specified the video will be saved as
+                        '<input_file>_subtitles.mp4'.
+  --temp TEMP           Path to the temporary directory where the intermediate files will be saved. If not specified
+                        the working directory will be used.
   --overwrite           Overwrite the original video file.
+  --burn                Burn the subtitles in the video instead of adding them as selectable.
+  --keep                Keep temporary files instead of deleting them after processing.
 ````
