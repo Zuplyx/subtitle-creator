@@ -1,8 +1,10 @@
 import argparse
+import datetime
 import os
 import shutil
 import subprocess
-import datetime
+import traceback
+from pathlib import Path
 
 import srt
 import torch
@@ -60,10 +62,10 @@ def translate_audio(audio_file: str) -> list[dict]:
         device=device,
     )
 
+    print("Starting transcription and translation")
     # get the result with timestamps
-    print("Starting translation and transcription")
     result = pipe(audio_file, return_timestamps=True, generate_kwargs={"task": "translate"})
-    print("Finished translation and transcription")
+    print("Finished transcription and translation")
     return result["chunks"]
 
 
@@ -83,16 +85,33 @@ def create_subs(translations: list[dict]) -> list[srt.Subtitle]:
         text = translation['text']
 
         # If this is not the first entry, check if the text is the same as the previous one
-        if i > 0 and translations[i-1]['text'] == text:
+        if i > 0 and translations[i - 1]['text'] == text:
             # If it's the same, append the current timestamp to the previous subtitle
-            subs[-1].end = datetime.timedelta(seconds=max(subs[-1].end.total_seconds(), timestamp[1]))
+            subs[-1].end = convert_to_timedelta(max(subs[-1].end.total_seconds(), timestamp[1]))
         else:
             # Otherwise, create a new subtitle with the current text and timestamp
-            s = srt.Subtitle(index=i, content=text, start=datetime.timedelta(seconds=timestamp[0]), end=datetime.timedelta(seconds=timestamp[1]))
+            # TODO: Deal with repetitions inside the text, so we don't produce a wall of text
+            s = srt.Subtitle(index=i, content=text, start=convert_to_timedelta(timestamp[0]),
+                             end=convert_to_timedelta(timestamp[1]))
             subs.append(s)
 
     return subs
 
+
+def convert_to_timedelta(timestamp: float) -> datetime.timedelta:
+    """
+    Converts a timestamp (in seconds) to a timedelta object.
+    Args:
+        timestamp (float): Timestamp in seconds
+
+    Returns:
+        datetime.timedelta: Timedelta object representing the time interval or ZERO timedelta on error
+    """
+    try:
+        return datetime.timedelta(seconds=timestamp)
+    except Exception as e:
+        print(f"Error in convert_to_timedelta: {e}")
+        return datetime.timedelta(0)
 
 
 def create_srt_files(subs: list[srt.Subtitle], srt_file: str):
@@ -116,6 +135,7 @@ def add_selectable_subtitles_to_video(video_file, subtitle_file, output_video):
     try:
         subprocess.run([
             'ffmpeg',
+            '-hwaccel', 'auto',
             '-i', video_file,
             '-i', subtitle_file,
             '-c:v', 'copy',
@@ -135,11 +155,13 @@ def add_selectable_subtitles_to_video(video_file, subtitle_file, output_video):
         print(f"An unexcpected error occurred during adding subtitles to video: {str(e)}")
         raise e
 
+
 def add_burned_subtitles_to_video(video_file, subtitle_file, output_video):
     """Add burned in subtitles to video using ffmpeg."""
     try:
         subprocess.run([
             'ffmpeg',
+            '-hwaccel', 'auto',
             '-i', video_file,
             '-vf', "subtitles={}".format(subtitle_file),
             '-y',
@@ -153,29 +175,21 @@ def add_burned_subtitles_to_video(video_file, subtitle_file, output_video):
         raise e
 
 
-# Main Workflow
-def main(video_file: str, output_file: str, overwrite: bool, burn_in: bool, keep:bool, temp_dir: str ):
-    check_ffmpeg()
-
+def process_file(burn_in, keep, output_file, overwrite, temp_dir, video_file):
     # temp files
     audio_file = 'audio.wav'
     subtitle_file = 'subtitles.srt'
     if temp_dir:
-        audio_file = temp_dir +"/" + audio_file
-        subtitle_file = temp_dir +"/" +subtitle_file
-
+        audio_file = temp_dir + "/" + audio_file
+        subtitle_file = temp_dir + "/" + subtitle_file
     # extract audio
     extract_audio(video_file, audio_file)
-
     # transcribe and translate audio
     translations = translate_audio(audio_file)
-
-   # create subtitles from translations
+    # create subtitles from translations
     subs = create_subs(translations)
-
     # Create Subtitle file
     create_srt_files(subs, subtitle_file)
-
     # Determine output file path
     if not output_file:
         output_video = os.path.splitext(video_file)[0] + "_subtitles.mp4"
@@ -184,7 +198,6 @@ def main(video_file: str, output_file: str, overwrite: bool, burn_in: bool, keep
             raise FileExistsError(
                 f"Output file '{output_file}' already exists. Use the --overwrite flag to overwrite it.")
         output_video = output_file
-
     if not burn_in:
         # Add selectable subtitles to video
         add_selectable_subtitles_to_video(video_file, subtitle_file, output_video)
@@ -199,27 +212,50 @@ def main(video_file: str, output_file: str, overwrite: bool, burn_in: bool, keep
             shutil.move(output_video, video_file)
             output_video = video_file
         print(f"Burned in subtitles added successfully! Output saved to: {output_video}")
-
-
-
     # Delete temp files
     if not keep:
         os.remove(audio_file)
         os.remove(subtitle_file)
 
+
+# Main Workflow
+def main(video_file: str, output_file: str, overwrite: bool, burn_in: bool, keep: bool, temp_dir: str):
+    check_ffmpeg()
+
+    if not os.path.exists(video_file):
+        raise FileNotFoundError(f"The input {video_file} does not exist!")
+
+    if temp_dir and not os.path.exists(temp_dir):
+        raise FileNotFoundError(f"TempDir {temp_dir} does not exist!")
+
+    if os.path.isdir(video_file):
+        print(f"{video_file} is a directory. Processing all files in the directory.")
+        path_list = Path(video_file).glob('**/*.*')
+        for path in path_list:
+            try:
+                print(f"Processing {path}...")
+                process_file(burn_in, False, output_file, overwrite, temp_dir, path)
+            except Exception as e:
+                print(f"{path} failed with error: {e}")
+                traceback.print_exception(e)
+    else:
+        process_file(burn_in, keep, output_file, overwrite, temp_dir, video_file)
+
+
 # Command-line arguments setup
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Add translated subtitles to a video.")
-    parser.add_argument("video_file", help="Path to the input video file.")
+    parser.add_argument("video_file", help="Path to the input video file. Alternatively, a path to a directory containing video files.", type=str)
     parser.add_argument("-o", "--output",
                         help="Path to the output video file. If not specified the video will be saved as "
-                             "'<input_file>_subtitles.mp4'.")
+                             "'<input_file>_subtitles.mp4'.", type=str)
     parser.add_argument("--temp",
-                        help="Path to the temporary directory where the intermediate files will be saved. If not specified the working directory will be used.")
-    parser.add_argument("--overwrite", help="Overwrite the original video file.", action="store_true")
-    parser.add_argument("--burn", help="Burn the subtitles in the video instead of adding them as selectable.", action="store_true")
+                        help="Path to the temporary directory where the intermediate files will be saved. If not specified the working directory will be used.", type=str)
+    parser.add_argument("--overwrite", help="Overwrite the original video file.", action="store_true", type=bool)
+    parser.add_argument("--burn", help="Burn the subtitles in the video instead of adding them as selectable.",
+                        action="store_true", type=bool)
     parser.add_argument("--keep", help="Keep temporary files instead of deleting them after processing.",
-                        action="store_true")
+                        action="store_true", type=bool)
     args = parser.parse_args()
-
+    # TODO: make ffmpeg hardware acceleration mode configurable
     main(args.video_file, args.output, args.overwrite, args.burn, args.keep, args.temp)
