@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import os
+import re
 import shutil
 import subprocess
 import traceback
@@ -69,6 +70,31 @@ def translate_audio(audio_file: str) -> list[dict]:
     return result["chunks"]
 
 
+def replace_consecutive_duplicates(text: str) -> str:
+    """
+    Replaces consecutive duplicate words in a string.
+
+    Args:
+        text (str): Input string
+
+    Returns:
+        str: String with consecutive duplicates replaced with the word and a counter
+    """
+
+    def replacer(match):
+        """Replacer function to handle duplicate words"""
+        word = match.group(1)
+        count = len(match.group(0).split())
+        return f"{word}[x{count}]"
+
+    # Regex pattern to find consecutive duplicate words
+    pattern = r'\b(\w+)(?:\s+\1)+\b'
+
+    # Replace consecutive duplicates using re.sub
+    result = re.sub(pattern, replacer, text)
+    return result
+
+
 def create_subs(translations: list[dict]) -> list[srt.Subtitle]:
     """Create a list of Subtitle objects for each translation chunk.
 
@@ -90,7 +116,9 @@ def create_subs(translations: list[dict]) -> list[srt.Subtitle]:
             subs[-1].end = convert_to_timedelta(max(subs[-1].end.total_seconds(), timestamp[1]))
         else:
             # Otherwise, create a new subtitle with the current text and timestamp
-            # TODO: Deal with repetitions inside the text, so we don't produce a wall of text
+            if len(text) > 240:
+                # replace duplicates inside the text
+                text = replace_consecutive_duplicates(text)
             s = srt.Subtitle(index=i, content=text, start=convert_to_timedelta(timestamp[0]),
                              end=convert_to_timedelta(timestamp[1]))
             subs.append(s)
@@ -245,17 +273,20 @@ def main(video_file: str, output_file: str, overwrite: bool, burn_in: bool, keep
 # Command-line arguments setup
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Add translated subtitles to a video.")
-    parser.add_argument("video_file", help="Path to the input video file. Alternatively, a path to a directory containing video files.", type=str)
+    parser.add_argument("video_file",
+                        help="Path to the input video file. Alternatively, a path to a directory containing video files.",
+                        type=str)
     parser.add_argument("-o", "--output",
                         help="Path to the output video file. If not specified the video will be saved as "
                              "'<input_file>_subtitles.mp4'.", type=str)
     parser.add_argument("--temp",
-                        help="Path to the temporary directory where the intermediate files will be saved. If not specified the working directory will be used.", type=str)
-    parser.add_argument("--overwrite", help="Overwrite the original video file.", action="store_true", type=bool)
+                        help="Path to the temporary directory where the intermediate files will be saved. If not specified the working directory will be used.",
+                        type=str)
+    parser.add_argument("--overwrite", help="Overwrite the original video file.", action="store_true")
     parser.add_argument("--burn", help="Burn the subtitles in the video instead of adding them as selectable.",
-                        action="store_true", type=bool)
+                        action="store_true")
     parser.add_argument("--keep", help="Keep temporary files instead of deleting them after processing.",
-                        action="store_true", type=bool)
+                        action="store_true")
     args = parser.parse_args()
     # TODO: make ffmpeg hardware acceleration mode configurable
     main(args.video_file, args.output, args.overwrite, args.burn, args.keep, args.temp)
