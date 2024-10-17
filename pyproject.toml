@@ -10,7 +10,7 @@ python = "^3.12"
 charset_normalizer = "^3.3.0"
 srt = "^3.5.3"
 transformers = "^4.45.1"
-accelerate = "^0.34.2"
+accelerate = "^1.0.1"
 torchvision = {version = "^0.19.1+cu124", source = "pytorch-gpu"}
 torchaudio = {version = "^2.4.1+cu124", source = "pytorch-gpu"}
 torch = {version = "^2.4.1+cu124", source = "pytorch-gpu"}
