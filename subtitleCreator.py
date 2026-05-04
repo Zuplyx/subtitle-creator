@@ -45,7 +45,7 @@ def translate_audio(audio_file: str) -> list[dict]:
     model_id = "openai/whisper-large-v3"
 
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
+        model_id, dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
     )
     model.to(device)
 
@@ -57,7 +57,7 @@ def translate_audio(audio_file: str) -> list[dict]:
         model=model,
         tokenizer=processor.tokenizer,
         feature_extractor=processor.feature_extractor,
-        torch_dtype=torch_dtype,
+        dtype=torch_dtype,
         chunk_length_s=30,
         batch_size=16,  # batch size for inference - set based on your device
         device=device,
