@@ -6,7 +6,7 @@ authors = ["Zuplyx <patrick_98@t-online.de>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.12,<3.15"
+python = ">=3.12,<3.15,!=3.14.1"
 charset_normalizer = "^3.3.0"
 srt = "^3.5.3"
 transformers = ">=4.45.1,<6.0.0"
