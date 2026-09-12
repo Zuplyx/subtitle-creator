@@ -10,7 +10,7 @@ python = ">=3.12,<3.15,!=3.14.1"
 srt = "^3.5.3"
 transformers = ">=5.16.1,<6.0.0"
 accelerate = "^1.0.1"
-torch = {version = "^2.13.0+cu132", source = "pytorch-gpu"}
+torch = {version = "^2.14.0+cu132", source = "pytorch-gpu"}
 
 [[tool.poetry.source]]
 name = "pytorch-gpu"
